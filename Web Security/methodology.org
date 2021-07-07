@@ -1,0 +1,224 @@
+#+title:     Bug Bounty notes
+
+* Recon
+** Subdomain enumeration
+*** subdomain enumeration with Amass
+#+begin_src sh
+amass enum -d example.com
+#+end_src
+** Whois
+** URL discovery
+*** URLs Discovery with Gobuster and Seclist
+The below example will find URLs in example.com using a word-list, the =-x= parameter is to define a file type and is optional
+
+#+begin_src sh
+gobuster dir -u https://example.com -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt -x html,txt,php,js
+#+end_src
+** Port Scanning
+** Screenshots
+* Exploits
+** Server-side request forgery (SSRF)
+*** Basics
+SSRF is often linked with other vulnerabilities and can sometime lead to RCE (remote code execution)
+
+SSRF occurs when an application make request to external URLs but doesn't validate properly the URL used, one could then change the URL to an internal file, for example this could happen for a file upload feature, instead of uploading a file found on example.com/image.png we could change it to localhost/secret.txt and the application would make itself the request to the file and then return it.
+
+Example payload
+#+begin_example
+https://target.com/page?url=http://127.0.0.1/admin
+#+end_example
+
+*** Example
+#+begin_src python
+from flask import Flask, request, render_template, redirect
+import requests
+
+
+app = Flask(__name__)
+
+
+@app.route("/")
+def index():
+    url = request.args.get("url")
+    r = requests.head(url, timeout=2.000)
+    return render_template("index.html", result = r.content)
+
+if __name__ == "__main__":
+      app.run(host = '0.0.0.0')
+#+end_src
+
+This flask app makes a request to a given ~url~ parameter. Attackers essentially have full control of the URL and can make arbitrary GET requests to any website on the Internet through the server, as well as accessing resources on the server itself.
+
+*** Find SSRF
+To find a SSRF vulnerability, We should generally test manually every endpoint that processes a user-provided URL.
+
+Examples of features commonly vulnerable to SSRF:
+  + webhooks
+  + file upload via URL
+  + document and image processors
+  + link expansion
+  + proxy services (these features all require visiting and fetching external resources)
+  + and others...
+
+We can find SSRF against the server itself using ~localhost~ or against another backend system using internal IP addresses like =192.168.0.X=
+We should also scan ports to see available services, and use these ports for a potential SSRF attack.
+
+*** Exploit SSRF
+**** Basic SSRF
+**** Blind SSRF
+The most reliable way to detect blind SSRF vulnerabilities is using out-of-band (OAST) techniques. This involves attempting to trigger an HTTP request to an external system that you control, and monitoring for network interactions with that system.
+**** Chained SSRF
+**** SSRF via XEE
+see: [[XML external entity (XXE) injection]]
+*** Sanitation & Bypass
+
++ If =localhost= and =127.0.0.1= are sanitized we can try the IPV6 version of ~localhost~: =[::]= (we can also omit the brackets) or use =0000::1=
+
++ We can shorten =127.0.0.1= to → =127.1=
+
++ =127.0.0.1= can be replaced by decimal or hexadecimal version: ~2130706433~ & ~0x7f000001~
+
++ Use internal IP addresses: =192.168.0.0/16=  =172.16.0.0/12=  =10.0.0.0/8=
+
++ Registering your own domain name that resolves to 127.0.0.1. You can use ~spoofed.burpcollaborator.net~ for this purpose.
+
++ Obfuscating blocked strings using URL encoding or case variation.
+
++ We can embed credentials in a URL before the hostname, using the @ character. For example: https://expected-host@evil-host.
+
++ We can use the # character to indicate a URL fragment
+  #+begin_example
+  https://evil-host#expected-host.
+  #+end_example
+
++ We can leverage the DNS naming hierarchy to place required input into a fully-qualified DNS name that you control
+  #+begin_example
+  https://expected-host.evil-host.
+  #+end_example
+
++ We can URL-encode characters to confuse the URL-parsing code. This is particularly useful if the code that implements the filter handles URL-encoded characters differently than the code that performs the back-end HTTP request.
+
++ We can use combinations of these techniques together.
+
++ Via an open redirect
+  #+begin_example
+stockApi=http://weliketoshop.net/product/nextProduct?currentProductId=6&path=http://192.168.0.68/admin
+  #+end_example
+
+
+#+begin_comment
+Try and find an alternative to ~burpcollaborator~
+#+end_comment
+
+*** Prevent SSRF
+*** Labs
++ [[https://github.com/incredibleindishell/SSRF_Vulnerable_Lab][Server-Side Request Forgery (SSRF) vulnerable Lab]]
++ [[https://tryhackme.com/room/ssrf][Tryhackme basic lab]]
++ [[https://tryhackme.com/room/thegreatescape][Medium Trychacke lab involving SSRF]]
+*** Resources
++ [[https://github.com/jdonsec/AllThingsSSRF][AllThingsSSRF]] (contains writeups and labs too)
++ [[https://book.hacktricks.xyz/pentesting-web/ssrf-server-side-request-forgery][HackTricks]]
++ [[https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Server%20Side%20Request%20Forgery][Payloads All The Things]]
++ [[https://pravinponnusamy.medium.com/ssrf-payloads-f09b2a86a8b4][Medium Post by Pravinrp]]
++ [[https://portswigger.net/research/cracking-the-lens-targeting-https-hidden-attack-surface][targeting HTTP's hidden attack-surface]]
++ [[https://portswigger.net/web-security/ssrf][Portswigger Academy - SSRF]]
+
+** SQL Injection
+*** Basics
+*** Example
+
+This login form:
+#+begin_src html
+<form method="POST">
+  <label for="username">Username</label>
+  <input type="text" name="username" value="John" />
+  <label>Password</label>
+  <input type="password" name="password" value="pass123"  />
+  <button type="submit">login</button>
+</form>
+#+end_src
+
+will result with this query:
+#+BEGIN_SRC sql
+  SELECT user_id
+    FROM users
+   WHERE username='John' AND password='pass123'
+#+END_SRC
+
+let's say this app is vulnerable to basic SQLi, we can make our injection on the ~username~ input:
+#+begin_src html
+<form method="POST">
+  <label for="username">Username</label>
+  <input type="text" name="username" value="John' OR 1=1--" />
+  <label>Password</label>
+  <input type="password" name="password" value="pass123" />
+  <button type="submit">login</button>
+</form>
+#+end_src
+
+will result in this query:
+#+BEGIN_SRC sql
+  SELECT user_id
+    FROM users
+   WHERE username='John'
+      OR 1=1--' AND password='pass123'
+#+END_SRC
+
+this bypass the password check and allow us to sign in knowing the username only
+
+*** Find an SQL Injection
+*** Exploit
+**** Basic SQL Injection
+**** Blind SQL Injection
+*** Prevent SQL Injections
+*** SQLi Cheat sheet
+** Cross-site scripting (XSS)
+*** Filters
+**** Whitelist/Blacklist filter
+**** Web Application Filter (WAF)
+**** Content Security Policy (CSP)
+*** Tools
++ ~Hackvertor~: encoding & obfuscation tool
++ ~xss hunter~: server for extracting data via xss
++ ~BeEF~: browser exploitation framework
+*** Cheat sheet
+** TODO Cross-site request forgery (CSRF)
+** TODO Clickjacking
+** TODO DOM-based vulnerabilities
+** TODO Cross-origin resource sharing (CORS)
+** TODO XML external entity (XXE) injection
+** TODO HTTP request smuggling
+** TODO OS Command Injection
+** TODO Server-side template injection
+** TODO Directory Traversal
+** TODO Access control vulnerabilities
+** TODO Authentication
+** TODO WebSockets
+** TODO Web cache poisoning
+** TODO Insecure deserialization
+** TODO Information disclosure
+** TODO Business logic vulnerabilities
+** TODO HTTP Host header attacks
+** TODO OAuth authentication
+* Tools
+** nip.io
+To replace ~burpcollaborator~ I think, it will convert any IP address as a DNS:
+#+begin_example
+NIP.IO maps <anything>.<IP Address>.nip.io to the corresponding <IP Address>, even 127.0.0.1.nip.io maps to 127.0.0.1
+#+end_example
+** Dom-invader
+A Burpsuite extension to make it more easy to find sinks. It only works on the embedded browser of Burpsuite.
+Link: https://portswigger.net/blog/introducing-dom-invader
+* TODO Bug bounty write-ups to read [3/7]
+
++ [X] [[https://portswigger.net/research/finding-dom-polyglot-xss-in-paypal-the-easy-way][Finding DOM Polyglot XSS in PayPal the Easy Way]]
++ [ ] [[https://portswigger.net/research/pre-auth-rce-in-forgerock-openam-cve-2021-35464][Pre-auth RCE in ForgeRock OpenAM (CVE-2021-35464)]]
++ [ ] [[https://research.checkpoint.com/2021/a-supply-chain-breach-taking-over-an-atlassian-account/][A supply-chain breach: Taking over an Atlassian account]]
++ [X] [[https://www.pethuraj.com/blog/escalating-xss-to-arbitrary-file-read/][Escalating XSS to Arbitrary File Read]]
++ [ ] [[https://infosecwriteups.com/reflected-xss-through-insecure-dynamic-loading-dbf4d33611e0][Reflected XSS Through Insecure Dynamic Loading]]
++ [X] [[https://infosecwriteups.com/account-takeovers-believe-the-unbelievable-bb98a0c251a4][Account Takeovers]]
++ [ ] [[https://saadahmedx.medium.com/exploiting-auto-save-functionality-to-steal-login-credentials-bf4c7e1594da][Exploiting Auto-save Functionality To Steal Login Credentials]]
+
+* Web Pentesting Checklist
+See [[org:Cybersec/bugbounty/checklist.org][checklist]]
+* TODO Resources

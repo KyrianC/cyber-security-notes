@@ -1,0 +1,112 @@
+#+title:     Reverse Engineering Notes
+#+author:    Kyrian
+#+email:     ckyrian@protonmail.com
+
+Notes taken from [[pdf:Hacking The Art of Exploitation by Jon Erickson (z-lib.org).pdf::80][Hacking: The Art of Expoitation]](pdf) and [[https://www.tryhackme.com][Tryhackme]]'s room
+
+* The Assembly language
+** Registers
+
+The first four registers (*EAX*, *ECX*, *EDX*, and *EBX*) are known as general purpose registers. These are called:
+
++ Accumulator  (EAX, RAX, AX)
++ Base         (EBX, RBX, BX)
++ Counter      (ECX, RCX, CX)
++ Data         (EDX, RDX, DX)
+
+They are used for a variety of purposes, but they mainly act as temporary variables for the CPU when it is  The second four registers (*ESP*, *EBP*, *ESI*, and *EDI*) are also general purpose registers, but they are sometimes known as pointers and indexes. These stand for:
+
++ Stack Pointer     (ESP, RSP, SP)
++ Base Pointer      (EBP, RBP, BP)
++ Source Index      (ESI, RSI, SI)
++ Destination Index (EDI, RDI, DI)
+
+The first two registers are called pointers because they store 32-bit addresses, which essentially point to that location in memory. These registers are fairly important to program execution and memory management; The last two registers are also technically pointers, which are commonly used to point to the source and destination when data needs to be read from or written to. There are load and store instructions that use these registers, but for the most part, these registers can be thought of as just simple general-purpose registers.
+The *EIP* register is the Instruction Pointer register, which points to the current instruction the processor is reading. Like a child pointing his finger at each word as he reads, the processor reads each instruction using the *EIP* register as its finger. Naturally, this register is quite important and will be used a lot while debugging.  The remaining EFLAGS register actually consists of several bit flags that are used for comparisons and memory segmentations. The actual memory is split into several different segments, which will be discussed later, and these registers keep track of that. For the most part, these registers can be ignored since they rarely need to be
+
+** Memory Structure
+A compiled program's memory is divided into five segments:
+
+*** Text (or Code) segment
+
+It is where the assembled machine language instructions of the program are located.
+The execution of instructions is non-linear (jump and branch in asm)
+The Instruction Pointer is set t0 the first instruction in the text segment, the processor then follows an execution loop that does the following:
+
+1. Reads the instruction that EIP is pointing to
+2. Adds the byte length of the instruction to EIP
+3. Executes the instruction that was read in step 1
+4. Goes back to step 1
+   
+Write permission is disabled in the text segment, as it is not used to store variables, only code. This prevents people from actually modifying the program code. By being read-only it also allow it to be shared among different copies of the program, allowing multiple executions of the program at the same time.
+This memory segment has a fixed size, since nothing ever changes in it.
+
+*** Data segment
+This segment is used to store /itialized/ global and static program variables.Although this segment is writable it also have a fixed size.
+
+*** Bss segment
+Just like the data segment, the only difference is that this segment store /unitialized/ global and static program variables.
+
+*** Heap segment
+It is a segment of memory the programmer can directly control. Blocks of memory in this segment can be allocated and used for whatever the programmer mught need.
+The heap segment isn't of fixed size. It can grow larger or smaller as needed.
+All of the memory within the heap are allocated by /allocator/ and /deallocator/ algorithms, which respectively resever a region of memory in the heap for use and remove reservations to allow that portion of memory to be reused for later reservations.
+The heap will then grow or shrink depending on how much memory is reserved for use.
+The growth of the heap move downward toward higher memory addresses.
+
+*** Stack segment
+This segment also have a variable size and is used as a temporary scratch pad to store local function variables and context during funtion calls. This is what GBD's bakctrace [[Commands][command]] looks at.
+When a program acalls a function, that funtion will have its own set of passed variables, and the functions's code will be at a different memory location in the text segment. Since the xontext and the Instruction Pointer must change when a function is called, the stack is used to remember all of the passed variables, the location the IP should return to after the function is finished, and all the local variables used by that function. All of this information is stored together on the stack in what is collectively called a *stack frame*. The stack contains many *stack frames*.
+
+In general computer science terms, a stack is an abstract data structure that is used frequently. It has first-in, last-out (FILO) ordering, which means the first item that is put into a stack is the last item to come out of it. Think of it as putting beads on a piece of string that has a knot on one end—you can’t get the first bead off until you have removed all the other beads. When an item is placed into a stack, it’s known as pushing, and when an item is removed from a stack, it’s called popping.
+
+As the name implies, the stack segment of memory is, in fact, a stack data structure, which contains stack frames. The Stack Pointer register is used to keep track
+of the address of the end of the stack, which is constantly changing as items are pushed into and popped off of it. Since this is very dynamic behavior, it makes sense that the stack is also not of a fixed size. Opposite to the dynamic growth of the heap, as the stack changes in size, it grows upward in a visual listing of memory, toward lower memory addresses.
+
+The FILO nature of a stack might seem odd, but since the stack is used to store context, it’s very useful. When a function is called, several things are pushed to the stack together in a stack frame. The EBP register—sometimes called the frame pointer (FP) or local base (LB) pointer—is used to reference local function variables in the current stack frame. Each stack frame contains the parameters to the function, its local variables, and two pointers that are nec- essary to put things back the way they were: the saved frame pointer (SFP) and the return address. The SFP is used to restore EBP to its previous value, and the return address is used to restore EIP to the next instruction found after the function call. This restores the functional context of the previous stack frame.
+
+
+* Debugger: gdb 
+** Commands
++ =run= Run program
++ =list= See 10 lines of source code
++ =break= [line number] Set breakpoint at a certain line
++ =cont= Continue after breakpoint
++ =bt= Stand for bakctrace, show the record of each function call on the stack
++ =x= to examine an address: ~x/<number><display><length> <address>~
+
+    Example:
+    #+begin_example
+    "x/3xw 0x7fffffffe158", "x/x 0x7fffffffe158", "x/uw 0x7fffffffe158"
+    #+end_example
+
+
+  - *display*
+    * =o= Display in octal.
+    * =x= Display in hexadecimal.
+    * =u= Display in unsigned, standard base-10 decimal.
+    * =t= Display in binary-
+    * =i= Display the memory as disassembled assembly language instructions
+    * =c= Display ASCII format
+    * =s= Display as a string
+    
+  - *length*
+    * =b= A single byte
+    * =h= A halfword, which is two bytes in size
+    * =w= A word, which is four bytes in size
+    * =g= A giant, which is eight bytes in size
+
+* Radare2
+** Useful commands
+*** Analyze
++ =aaa= Analyze all
++ =afl= List functions
+*** Informations
++ =izz= Print all strings
+*** Print
++ =px <number> @ <entity>= Print hexa
++ =pdf @ <function>= print function
+*** Visual
++ =VV @ <functions>= cool graphic of function
+*** Debug
+*** Write
